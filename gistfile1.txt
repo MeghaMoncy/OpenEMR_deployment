@@ -1,0 +1,154 @@
+###########################################
+############ Install docker ###############
+###########################################
+sudo apt-get update
+sudo apt-get upgrade
+sudo apt-get install ca-certificates curl gnupg lsb-release
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update
+sudo apt-get install docker-ce docker-ce-cli containerd.io docker-compose-plugin -y
+sudo groupadd docker
+sudo usermod -aG docker $USER
+
+LOGOUT and LOGIN...
+
+docker run hello-world
+sudo systemctl enable docker.service
+sudo systemctl enable containerd.service
+
+sudo apt-get install docker-compose -y
+
+
+###########################################
+######### Create docker-compose ###########
+###########################################
+# Use admin/pass as user/password credentials to login to openemr (from OE_USER and OE_PASS below)
+# MYSQL_HOST and MYSQL_ROOT_PASS are required for openemr
+# MYSQL_USER, MYSQL_PASS, OE_USER, MYSQL_PASS are optional for openemr and
+#   if not provided, then default to openemr, openemr, admin, and pass respectively.
+version: '3.1'
+services:
+  mysql:
+    restart: always
+    image: mariadb:10.6
+    command: ['mysqld','--character-set-server=utf8mb4']
+    volumes:
+    - databasevolume:/var/lib/mysql
+    ports:
+    - 3306:3306
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+  openemr:
+    restart: always
+    image: openemr/openemr:7.0.0
+    ports:
+    - 80:80
+    - 443:443
+    volumes:
+    - logvolume01:/var/log
+    - sitevolume:/var/www/localhost/htdocs/openemr/sites
+    #- /home/oemr/openemr-devops/docker/openemr/flex-edge/utilities/:/root/
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_ROOT_PASS: root
+      MYSQL_USER: openemr
+      MYSQL_PASS: openemr
+      OE_USER: admin
+      OE_PASS: pass
+    depends_on:
+    - mysql
+volumes:
+  logvolume01: {}
+  sitevolume: {}
+  databasevolume: {}
+
+###########################################
+###### If you have access to volumes ######
+###########################################
+sudo apt-get install p7zip-full -y
+wget <downloadlink>?download=1
+mv <longfilename> 3-volumes.7z
+7z x 3-volumes.7z
+
+###########################################
+##### docker volumes correct restored #####
+###########################################
+
+docker volume create oemr_databasevolume
+docker volume create oemr_sitevolume
+docker volume create oemr_logvolume01
+
+sudo su
+cd /var/lib/docker/volumes/
+cp -r /home/oemr/oemr_databasevolume oemr_databasevolume
+cp -r /home/oemr/oemr_logvolume01/ oemr_logvolume01
+cp -r /home/oemr/oemr_sitevolume/ oemr_sitevolume
+
+chown -Rf oemr:root oemr_databasevolume/_data/
+chown -Rf oemr:root oemr_logvolume01/_data/
+chown -Rf oemr:root oemr_sitevolume/_data/
+
+exit
+
+REMEMBER TO CHANGE THE DOCKER COMPOSE to point to these volume locations
+nano docker-compose.yml
+
+volumes:
+  oemr_databasevolume:
+    external: true
+    
+  oemr_logvolume01:
+    external: true
+    
+  oemr_sitevolume:
+    external: true
+
+###########################################
+######### Clone devops repo ###############
+###########################################
+
+git clone https://github.com/openemr/openemr-devops
+chmod +x openemr-devops/docker/openemr/flex-edge/utilities/devtools
+chmod +x openemr-devops/docker/openemr/flex-edge/utilities/devtoolsLibrary.source
+
+mkdir ~/bin
+curl -L https://raw.githubusercontent.com/openemr/openemr-devops/master/utilities/openemr-cmd/openemr-cmd > ~/bin/openemr-cmd
+curl -L https://raw.githubusercontent.com/openemr/openemr-devops/master/utilities/openemr-cmd/openemr-cmd-h > ~/bin/openemr-cmd-h
+
+chmod +x ~/bin/openemr-cmd
+chmod +x ~/bin/openemr-cmd-h
+
+LOGOUT and LOGIN back again
+
+###########################################
+######### Generate patients correctly #####
+###########################################
+nano openemr-devops/docker/openemr/flex-edge/utilities/devtoolsLibrary.source
+
+Change text in:
+java -jar synthea-with-dependencies.jar --exporter.fhir.export false --exporter.ccda.export true --generate.only_alive_patients true --generate.append_numbers_to_person_names false --exporter.clinical_note.export true -p "$1"
+
+
+docker-compose up
+Ctrl + C
+docker-compose up -d
+
+###########################################
+########## Adding codesets ################
+###########################################
+
+UPLOAD FILES TO CORRECT LOCATION: /home/oemr/openemr-devops/docker/openemr/flex-edge/utilities/
+
+docker exec -i d234d01cb0f0 sh -c "mv /root/RxNorm_full_01032023.zip /var/www/localhost/htdocs/openemr/contrib/rxnorm/RxNorm_full_01032023.zip"
+docker exec -i d234d01cb0f0 sh -c "mv /root/SnomedCT_USEditionRF2_PRODUCTION_20220901T120000Z.zip /var/www/localhost/htdocs/openemr/contrib/snomed/SnomedCT_USEditionRF2_PRODUCTION_20220901T120000Z.zip"
+docker exec -i d234d01cb0f0 sh -c "mv /root/ep_ec_only_cms_20190510.xml.zip /var/www/localhost/htdocs/openemr/contrib/snomed/ep_ec_only_cms_20190510.xml.zip"
+
+###########################################
+########## Generate patients ##############
+###########################################
+openemr-cmd irp 100 true
